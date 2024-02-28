@@ -18,11 +18,9 @@ class ScyPaper:
 
     #
     #   Essa função ranqueia um objetivo baseado na sua posição no texto
-    #   o escore BM25 de palavras chave do objetivo
-    #   e o tamanho do objetivo em relação ao menor objetivo
-    #   De forma que objetivos no começo do texto, com palavras chave e maior tamanho
-    #   são ranqueados mais alto
-    #
+    #   e o escore de query BM25
+    #   De forma que objetivos no começo do texto, com palavras da query
+    #   pontuem mais
     #
     def __ranquear_objetivo(list_of_sentences: list[str], sentence: tuple[int, str]) -> float:
         query = [
