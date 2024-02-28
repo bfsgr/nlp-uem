@@ -1,3 +1,4 @@
+import csv
 import os
 import re
 import sys
@@ -129,19 +130,10 @@ class ScyPaper:
         sorted_objetives = sorted(objective_with_index,
                                   key=lambda x: ranquear_objetivo(objectives, x), reverse=True)
 
-        return sorted_objetives[0][1] if len(sorted_objetives) > 0 else 'No objective found'
+        match = sorted_objetives[0][1] if len(
+            sorted_objetives) > 0 else 'No objective found'
 
-
-def process_file(path: str):
-    text = extrair_texto(path)
-
-    paper = ScyPaper(text)
-
-    print("\n=====================================\n")
-    print("Arquivo: ", path + '\n')
-    with open(path + '.txt', 'w') as file:
-        print("Objetivo => ", paper.objective + '\n')
-        file.write("Objetivo => " + paper.objective + '\n')
+        return match.replace('\n', ' ').strip()
 
 
 def main():
@@ -150,7 +142,7 @@ def main():
     nltk.download('averaged_perceptron_tagger')
     nltk.download('wordnet')
 
-    PASTA = './artigos-teste'
+    pasta = './artigos-teste'
 
     args = sys.argv[1:]
 
@@ -158,15 +150,43 @@ def main():
         path = args[0]
 
         if os.path.isfile(path) and path.endswith('.pdf'):
-            process_file(path)
+            text = extrair_texto(path)
+
+            paper = ScyPaper(text)
+
+            print("\n=====================================\n")
+            print("Arquivo: ", path + '\n')
+            print("Objetivo => ", paper.objective + '\n')
+
+            with open(path + '.csv', 'w') as file:
+                writer = csv.DictWriter(file, fieldnames=['name', 'objective'])
+                writer.writeheader()
+                writer.writerow(
+                    {'name': path, 'objective': paper.objective})
+
             return
 
         if os.path.isdir(path):
-            PASTA = path
+            pasta = path
 
-    for filename in os.listdir(PASTA):
+    for filename in os.listdir(pasta):
         if filename.endswith('.pdf'):
-            process_file(os.path.join(PASTA, filename))
+            fullpath = os.path.join(pasta, filename)
+
+            text = extrair_texto(fullpath)
+
+            paper = ScyPaper(text)
+
+            print("\n=====================================\n")
+            print("Arquivo: ", fullpath + '\n')
+            print("Objetivo => ", paper.objective + '\n')
+
+            with open(fullpath + '.csv', 'w') as file:
+                writer = csv.DictWriter(
+                    file, fieldnames=['name', 'objective'], delimiter=';')
+                writer.writeheader()
+                writer.writerow(
+                    {'name': fullpath, 'objective': paper.objective})
 
 
 if (__name__ == '__main__'):
