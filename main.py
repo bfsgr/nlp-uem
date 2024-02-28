@@ -1,6 +1,7 @@
 import os
 import re
 import sys
+from collections import namedtuple
 
 import nltk
 from nltk.chunk import RegexpChunkParser
@@ -14,37 +15,66 @@ from text import composite, remove_punctuation, to_sentences, to_tokenized
 class ScyPaper:
     def __init__(self, text: str):
         self.text = text
-        self.objetives = self.search_for_objective()
+        self.objective = self.search_for_objective()
 
-    #
-    #   Essa função ranqueia um objetivo baseado na sua posição no texto
-    #   e o escore de query BM25
-    #   De forma que objetivos no começo do texto, com palavras da query
-    #   pontuem mais
-    #
-    def __ranquear_objetivo(list_of_sentences: list[str], sentence: tuple[int, str]) -> float:
-        query = [
-            'objective',
-            'paper',
-            'problem',
-            'present',
-            'approach',
-            'proposes',
-            'proposed',
-            'explores'
-        ]
+    def match_grammar(self, sentence: str, grammar: list[ChunkRule]) -> bool:
+        words = composite(
+            to_tokenized,
+            remove_punctuation,
+        )(sentence)
 
-        points = bm25_no_idf(
-            list_of_sentences, sentence[1], ' '.join(query))
+        tagged = nltk.pos_tag(words)
 
-        sentence_index = sentence[0]
+        tree = nltk.Tree('DOC', [(token, pos)
+                                 for token, pos in tagged])
 
-        locality = (1.0 - (sentence_index /
-                    (len(list_of_sentences) + 1)))
+        chunk_parser = RegexpChunkParser(
+            grammar, chunk_label='MATCHED')
 
-        return points + locality
+        chunks = chunk_parser.parse(tree)
 
-    def search_for_objective(self):
+        for chunk in chunks.subtrees():
+            if chunk.label() == 'MATCHED':
+                return True
+
+        return False
+
+    def search_for_objective(self) -> str:
+
+        #
+        #   Essa função busca por um objetivo no texto
+        #   baseado em estruturas gramaticais e palavras-chave
+        #   que indicam um objetivo
+        #
+
+        IndexToSentence = namedtuple('IndexToSentence', ['index', 'text'])
+
+        def ranquear_objetivo(list_of_sentences: list[str], sentence: IndexToSentence) -> float:
+            #
+            #   Essa função ranqueia um objetivo baseado na sua posição no texto
+            #   e o escore de query BM25
+            #   De forma que objetivos no começo do texto, com palavras da query
+            #   pontuem mais
+            #
+            query = [
+                'objective',
+                'paper',
+                'problem',
+                'present',
+                'approach',
+                'proposes',
+                'proposed',
+                'explores'
+            ]
+
+            points = bm25_no_idf(
+                list_of_sentences, sentence.text, ' '.join(query))
+
+            locality = (1.0 - (sentence.index /
+                        (len(list_of_sentences) + 1)))
+
+            return points + locality
+
         sentences = to_sentences(self.text)
 
         in_paper_re = re.compile(
@@ -58,50 +88,48 @@ class ScyPaper:
                 maybe_objective.add(index)
                 continue
 
-            words = composite(
-                to_tokenized,
-                remove_punctuation,
-            )(sentence)
+            # descarta frases vazias
+            if (sentence.strip() == ''):
+                continue
 
-            tagged = nltk.pos_tag(words)
-
-            tree = nltk.Tree('DOC', [(token, pos)
-                                     for token, pos in tagged])
-
-            # busca por estruturas gramaticais que indicam objetivo
-            OBJECTIVE_FORMATS = [
+            GRAMMAR = [
+                # this paper proposes a new security
+                # this paper proposes a method
+                # this paper proposes improved standards
                 ChunkRule(
-                    '<DT><NN><VBZ><DT>?<JJ>?<N.*>', 'Delimitador, substantivo, verbo, substantivo'),  # this paper proposes (a new) security
+                    '<DT><NN><VBZ><DT>?<JJ>?<N.*>',
+                    'Delimitador, substantivo, verbo, substantivo'),
 
+                # paper we present
+                # in this paper we present
                 ChunkRule('(<IN><DT>)?<NN><PRP><VB>.*',
-                          'substantivo, pronome verbo'),  # (in this) paper we present
+                          'substantivo, pronome verbo'),
 
+                # we propose a method
+                # we propose three methods
+                # we propose three new methods
+                # we propose a new method
                 ChunkRule('<PRP><VBP><DT|CD>?<JJ>?<NN>',
-                          'Pronome, verbo-participio, dilimitador, adjetivo, substantivo'),  # we propose ((a?, three?) new?) approaches
+                          'Pronome, verbo-participio, delimitador, adjetivo, substantivo'),
 
+                # something is proposed
+                # TurboJPEG is proposed
                 ChunkRule('<NN|NNP><VBZ><VBN>',
-                          'Substantivo/Nome próprio, verbo-presente, verbo-presente-participio'),  # something is proposed
+                          'Substantivo/Nome próprio, verbo-presente, verbo-presente-participio'),
             ]
 
-            chunk_parser = RegexpChunkParser(
-                OBJECTIVE_FORMATS, chunk_label='OBJECTIVE')
+            if self.match_grammar(sentence, GRAMMAR):
+                maybe_objective.add(index)
 
-            chunks = chunk_parser.parse(tree)
+        objective_with_index = [IndexToSentence(i, sentences[i])
+                                for i in maybe_objective]
 
-            for chunk in chunks.subtrees():
-                if chunk.label() == 'OBJECTIVE':
-                    maybe_objective.add(index)
-
-        objective_with_index = [(i, sentences[i])
-                                for i in list(maybe_objective)]
-
-        objectives = [obj[1] for obj in objective_with_index]
+        objectives = [obj.text for obj in objective_with_index]
 
         sorted_objetives = sorted(objective_with_index,
-                                  key=lambda x: ScyPaper.__ranquear_objetivo(
-                                      objectives, x), reverse=True)[:1]
+                                  key=lambda x: ranquear_objetivo(objectives, x), reverse=True)
 
-        return [s[1] for s in sorted_objetives]
+        return sorted_objetives[0][1] if len(sorted_objetives) > 0 else 'No objective found'
 
 
 def process_file(path: str):
@@ -109,16 +137,11 @@ def process_file(path: str):
 
     paper = ScyPaper(text)
 
-    print("=====================================\n")
-    print("FILE: ", path)
-    if len(paper.objetives) > 0:
-        with open(path + '.txt', 'w') as file:
-            for objective in paper.objetives:
-                print("Objetive => ", objective + '\n')
-                file.write("Objetive => " + objective + '\n\n')
-    else:
-        print("=> No objectives found\n")
-    print("=====================================\n")
+    print("\n=====================================\n")
+    print("Arquivo: ", path + '\n')
+    with open(path + '.txt', 'w') as file:
+        print("Objetivo => ", paper.objective + '\n')
+        file.write("Objetivo => " + paper.objective + '\n')
 
 
 def main():
@@ -128,8 +151,6 @@ def main():
     nltk.download('wordnet')
 
     PASTA = './artigos-teste'
-
-    i = 0
 
     args = sys.argv[1:]
 
@@ -144,12 +165,8 @@ def main():
             PASTA = path
 
     for filename in os.listdir(PASTA):
-        if not filename.endswith('.pdf'):
-            continue
-
-        process_file(os.path.join(PASTA, filename))
-
-        i += 1
+        if filename.endswith('.pdf'):
+            process_file(os.path.join(PASTA, filename))
 
 
 if (__name__ == '__main__'):
