@@ -57,11 +57,7 @@ class ScyPaper:
         locality = (1.0 - (sentence_index /
                     (len(list_of_sentences) + 1)))
 
-        shortest_sentence = min([len(s) for s in list_of_sentences])
-
-        sentence_length = len(sentence[1]) / shortest_sentence
-
-        return points + (locality + sentence_length) / 2
+        return points + locality
 
     def search_for_objective(self):
         sentences = to_sentences(self.text)
