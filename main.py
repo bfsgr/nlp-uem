@@ -27,26 +27,13 @@ class ScyPaper:
     def __ranquear_objetivo(list_of_sentences: list[str], sentence: tuple[int, str]) -> float:
         query = [
             'objective',
-            'aim',
-            'goal',
-            'purpose',
-            'novel',
             'paper',
-            'achieve',
-            'target',
-            'scope',
             'problem',
-            'solution',
-            'emphasis',
-            'study',
-            'attempts',
             'present',
             'approach',
-            'provide',
-            'introduces',
-            'enhance',
-            'solving',
-            'focus',
+            'proposes',
+            'proposed',
+            'explores'
         ]
 
         points = bm25_no_idf(
@@ -114,7 +101,7 @@ class ScyPaper:
 
         sorted_objetives = sorted(objective_with_index,
                                   key=lambda x: ScyPaper.__ranquear_objetivo(
-                                      objectives, x), reverse=True)[:3]
+                                      objectives, x), reverse=True)[:1]
 
         return [s[1] for s in sorted_objetives]
 
