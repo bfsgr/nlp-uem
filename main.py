@@ -12,11 +12,22 @@ from bm25 import bm25_no_idf
 from leitor import extrair_texto
 from text import composite, remove_punctuation, to_sentences, to_tokenized
 
+IndexToSentence = namedtuple('IndexToSentence', ['index', 'text'])
+
 
 class ScyPaper:
     def __init__(self, text: str):
-        self.text = text
+        self.text = self.clear_text(text)
         self.objective = self.search_for_objective()
+        self.problem = self.search_for_problem()
+
+    def clear_text(self, text: str) -> str:
+        # remove todo texto até a primeira ocorrência de "abstract"
+        until_abstract = re.compile(
+            r'[\s\S]*?abstract', re.IGNORECASE | re.MULTILINE)
+
+        r = re.sub(until_abstract, '', text.strip(), count=1)
+        return r
 
     def match_grammar(self, sentence: str, grammar: list[ChunkRule]) -> bool:
         words = composite(
@@ -41,14 +52,11 @@ class ScyPaper:
         return False
 
     def search_for_objective(self) -> str:
-
         #
         #   Essa função busca por um objetivo no texto
         #   baseado em estruturas gramaticais e palavras-chave
         #   que indicam um objetivo
         #
-
-        IndexToSentence = namedtuple('IndexToSentence', ['index', 'text'])
 
         def ranquear_objetivo(list_of_sentences: list[str], sentence: IndexToSentence) -> float:
             #
@@ -135,6 +143,88 @@ class ScyPaper:
 
         return match.replace('\n', ' ').strip()
 
+    def search_for_problem(self) -> str:
+
+        #
+        #   Essa função busca por um problema no texto
+        #   baseado em estruturas gramaticais e palavras-chave
+        #
+
+        def ranquear_problema(list_of_sentences: list[str], sentence: IndexToSentence) -> float:
+            #
+            #   Essa função ranqueia um problema baseado na sua posição no texto
+            #   e o escore de query BM25
+            #   De forma que problemas no começo do texto, com palavras da query
+            #   pontuem mais
+            #
+            query = [
+                'problem',
+                'issue',
+                'lacks',
+                'challenge',
+                'difficult',
+                'solve'
+            ]
+
+            points = bm25_no_idf(
+                list_of_sentences, sentence.text, ' '.join(query))
+
+            locality = (1.0 - (sentence.index /
+                        (len(list_of_sentences) + 1)))
+
+            return points + locality
+
+        sentences = to_sentences(self.text)
+
+        maybe_problem = set()
+
+        for (index, sentence) in enumerate(sentences):
+            if (sentence.strip() == ''):
+                continue
+
+            GRAMMAR = [
+                # the well-known problem of
+                ChunkRule(
+                    '<DT|CD><JJ><NN|NNS><IN>',
+                    'test'),
+                # lacks better security
+                ChunkRule(
+                    '<NNS><JJ><N.*>',
+                    'test2'),
+                # such as
+                ChunkRule(
+                    '<JJ><IN>',
+                    'test3'),
+                # security has always been
+                ChunkRule(
+                    '<NNS><VBZ><RB>?<VBN>',
+                    'test4'),
+                # this can prevent
+                ChunkRule(
+                    '<DT><MD><VB>',
+                    'test4'),
+                # by solving the
+                ChunkRule(
+                    '<IN><VBG><DT>',
+                    'test5'),
+
+            ]
+            if self.match_grammar(sentence, GRAMMAR):
+                maybe_problem.add(index)
+
+        problems_with_index = [IndexToSentence(i, sentences[i])
+                               for i in maybe_problem]
+
+        problems = [obj.text for obj in problems_with_index]
+
+        sorted_problems = sorted(problems_with_index,
+                                 key=lambda x: ranquear_problema(problems, x), reverse=True)
+
+        match = sorted_problems[0][1] if len(
+            sorted_problems) > 0 else 'No problem found'
+
+        return match.replace('\n', ' ').strip()
+
 
 def main():
     nltk.download('punkt')
@@ -157,12 +247,14 @@ def main():
             print("\n=====================================\n")
             print("Arquivo: ", path + '\n')
             print("Objetivo => ", paper.objective + '\n')
+            print("Problema => ", paper.problem + '\n')
 
             with open(path + '.csv', 'w') as file:
-                writer = csv.DictWriter(file, fieldnames=['name', 'objective'])
+                writer = csv.DictWriter(
+                    file, fieldnames=['name', 'objective', 'problem'])
                 writer.writeheader()
                 writer.writerow(
-                    {'name': path, 'objective': paper.objective})
+                    {'name': path, 'objective': paper.objective, 'problem': paper.problem})
 
             return
 
@@ -180,13 +272,14 @@ def main():
             print("\n=====================================\n")
             print("Arquivo: ", fullpath + '\n')
             print("Objetivo => ", paper.objective + '\n')
+            print("Problema => ", paper.problem + '\n')
 
             with open(fullpath + '.csv', 'w') as file:
                 writer = csv.DictWriter(
-                    file, fieldnames=['name', 'objective'], delimiter=';')
+                    file, fieldnames=['name', 'objective', 'problem'], delimiter=';')
                 writer.writeheader()
                 writer.writerow(
-                    {'name': fullpath, 'objective': paper.objective})
+                    {'name': fullpath, 'objective': paper.objective, 'problem': paper.problem})
 
 
 if (__name__ == '__main__'):
