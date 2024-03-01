@@ -1,8 +1,9 @@
-import csv
+import argparse
 import os
 import re
 import sys
 from collections import Counter, namedtuple
+from xml.etree import ElementTree
 
 import nltk
 from nltk.chunk import RegexpChunkParser
@@ -10,19 +11,22 @@ from nltk.chunk.regexp import ChunkRule
 
 from bm25 import bm25_no_idf
 from leitor import extrair_texto
-from text import (composite, remove_delimiters, remove_numbers,
-                  remove_punctuation, remove_single_char, remove_stop_words,
-                  to_sentences, to_tokenized)
+from text import (composite, illegal_xml_chars_RE, remove_delimiters,
+                  remove_numbers, remove_punctuation, remove_single_char,
+                  remove_stop_words, to_sentences, to_tokenized)
 
 IndexToSentence = namedtuple('IndexToSentence', ['index', 'text'])
 
 
 class ScyPaper:
+    text: str
+    bag_of_words: Counter
+    objective: str
+    problem: str
+    references: list[str]
+
     def __init__(self, text: str):
         self.text = self.clear_text(text)
-        self.bag_of_words = self.count_words(self.text)
-        self.objective = self.search_for_objective()
-        self.problem = self.search_for_problem()
         self.references = self.find_references(text)
 
     def count_words(self, text: str) -> Counter:
@@ -35,7 +39,9 @@ class ScyPaper:
             remove_delimiters,
         )(text)
 
-        return Counter(words)
+        self.bag_of_words = Counter(words)
+
+        return self.bag_of_words
 
     def clear_text(self, text: str) -> str:
         # remove todo texto até a primeira ocorrência de "abstract"
@@ -64,8 +70,8 @@ class ScyPaper:
 
         references = re.findall(reference_match, isolated)
 
-        for ref in references:
-            ref = ref.replace('\n', ' ').strip()
+        for i in range(len(references)):
+            references[i] = references[i].replace('\n', ' ').strip()
 
         return references
 
@@ -189,7 +195,9 @@ class ScyPaper:
         match = sorted_objetives[0][1] if len(
             sorted_objetives) > 0 else 'No objective found'
 
-        return match.replace('\n', ' ').strip()
+        self.objective = match.replace('\n', ' ').strip()
+
+        return self.objective
 
     def search_for_problem(self) -> str:
 
@@ -271,7 +279,9 @@ class ScyPaper:
         match = sorted_problems[0][1] if len(
             sorted_problems) > 0 else 'No problem found'
 
-        return match.replace('\n', ' ').strip()
+        self.problem = match.replace('\n', ' ').strip()
+
+        return self.problem
 
 
 def show_results(file: str, paper: ScyPaper):
@@ -292,12 +302,38 @@ def show_results(file: str, paper: ScyPaper):
 
 
 def write_to_file(file: str, paper: ScyPaper):
-    with open(file + '.csv', 'w') as file:
-        writer = csv.DictWriter(
-            file, fieldnames=['name', 'objective', 'problem', 'references'], delimiter=';')
-        writer.writeheader()
-        writer.writerow(
-            {'name': file, 'objective': paper.objective, 'problem': paper.problem, 'references': ' '.join(paper.references)})
+    root = ElementTree.Element('paper')
+    filename = ElementTree.SubElement(root, 'filename')
+    filename.text = os.path.basename(file)
+
+    objective = ElementTree.SubElement(root, 'objective')
+    objective.text = paper.objective
+
+    problem = ElementTree.SubElement(root, 'problem')
+    problem.text = paper.problem
+
+    most_cited = ElementTree.SubElement(root, 'most_cited')
+    for word, count in paper.bag_of_words.most_common(10):
+        word_node = ElementTree.SubElement(most_cited, 'word')
+        word_node.text = word
+        word_node.set('count', str(count))
+
+    references = ElementTree.SubElement(root, 'references')
+    for ref in paper.references:
+        ref_node = ElementTree.SubElement(references, 'ref')
+        ref_node.text = ref
+
+    tree = ElementTree.ElementTree(root)
+
+    ElementTree.indent(tree)
+
+    content = ElementTree.tostring(
+        root, encoding='unicode', xml_declaration=True)
+
+    content = illegal_xml_chars_RE.sub('', content)
+
+    with open(file + '.xml', 'wb') as f:
+        f.write(content.encode('utf-8'))
 
 
 def main():
@@ -306,36 +342,46 @@ def main():
     nltk.download('averaged_perceptron_tagger')
     nltk.download('wordnet')
 
-    pasta = './artigos-teste'
+    parser = argparse.ArgumentParser(
+        prog='Paper Analyzer')
 
-    args = sys.argv[1:]
+    parser.add_argument('path', help='Path to a file or directory', type=str)
+    parser.add_argument(
+        '-s', '--search', help='Search for a term in a file', type=str)
 
-    if (len(args) > 0):
-        path = args[0]
+    args = parser.parse_args()
 
-        if os.path.isfile(path) and path.endswith('.pdf'):
-            text = extrair_texto(path)
+    path = args.path
 
-            paper = ScyPaper(text)
+    if os.path.isfile(path) and path.endswith('.pdf'):
+        text = extrair_texto(path)
 
-            show_results(path, paper)
-            write_to_file(path, paper)
+        paper = ScyPaper(text)
 
-            return
+        paper.count_words(text)
+        paper.search_for_objective()
+        paper.search_for_problem()
 
-        if os.path.isdir(path):
-            pasta = path
+        show_results(path, paper)
+        write_to_file(path, paper)
 
-    for filename in os.listdir(pasta):
-        if filename.endswith('.pdf'):
-            fullpath = os.path.join(pasta, filename)
+        return
 
-            text = extrair_texto(fullpath)
+    if os.path.isdir(path):
+        for filename in os.listdir(path):
+            if filename.endswith('.pdf'):
+                fullpath = os.path.join(path, filename)
 
-            paper = ScyPaper(text)
+                text = extrair_texto(fullpath)
 
-            show_results(fullpath, paper)
-            write_to_file(fullpath, paper)
+                paper = ScyPaper(text)
+
+                paper.count_words(text)
+                paper.search_for_objective()
+                paper.search_for_problem()
+
+                show_results(fullpath, paper)
+                write_to_file(fullpath, paper)
 
 
 if (__name__ == '__main__'):
