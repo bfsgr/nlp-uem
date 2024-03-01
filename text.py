@@ -10,6 +10,12 @@ from nltk.tokenize import word_tokenize
 stop_words = set(stopwords.words('english'))
 puctuation = set(string.punctuation)
 
+stop_words.add('et')
+stop_words.add('al')
+puctuation.add('·')
+puctuation.add('``')
+puctuation.add("''")
+
 
 def composite(*func):
     def compose(f, g):
@@ -28,6 +34,18 @@ def to_tokenized(text: str):
 
 def remove_stop_words(text: list[str]):
     return [w for w in text if w not in stop_words]
+
+
+def remove_single_char(text: list[str]):
+    return [w for w in text if len(w) > 1]
+
+
+def remove_numbers(text: list[str]):
+    return [w for w in text if not w.isdigit()]
+
+
+def remove_delimiters(text: list[str]):
+    return [w for w in text if nltk.pos_tag([w])[0][1] != 'DT']
 
 
 def remove_punctuation(text: list[str]):

@@ -2,7 +2,7 @@ import csv
 import os
 import re
 import sys
-from collections import namedtuple
+from collections import Counter, namedtuple
 
 import nltk
 from nltk.chunk import RegexpChunkParser
@@ -10,7 +10,9 @@ from nltk.chunk.regexp import ChunkRule
 
 from bm25 import bm25_no_idf
 from leitor import extrair_texto
-from text import composite, remove_punctuation, to_sentences, to_tokenized
+from text import (composite, remove_delimiters, remove_numbers,
+                  remove_punctuation, remove_single_char, remove_stop_words,
+                  to_sentences, to_tokenized)
 
 IndexToSentence = namedtuple('IndexToSentence', ['index', 'text'])
 
@@ -18,8 +20,22 @@ IndexToSentence = namedtuple('IndexToSentence', ['index', 'text'])
 class ScyPaper:
     def __init__(self, text: str):
         self.text = self.clear_text(text)
+        self.bag_of_words = self.count_words(self.text)
         self.objective = self.search_for_objective()
         self.problem = self.search_for_problem()
+        self.references = self.find_references(text)
+
+    def count_words(self, text: str) -> Counter:
+        words = composite(
+            to_tokenized,
+            remove_stop_words,
+            remove_punctuation,
+            remove_numbers,
+            remove_single_char,
+            remove_delimiters,
+        )(text)
+
+        return Counter(words)
 
     def clear_text(self, text: str) -> str:
         # remove todo texto até a primeira ocorrência de "abstract"
@@ -27,7 +43,31 @@ class ScyPaper:
             r'[\s\S]*?abstract', re.IGNORECASE | re.MULTILINE)
 
         r = re.sub(until_abstract, '', text.strip(), count=1)
+
+        # remove todo texto após a última ocorrência de "references"
+        after_references = re.compile(
+            r'references[\s\S]*', re.IGNORECASE | re.MULTILINE)
+
+        r = re.sub(after_references, '', r.strip(), count=1)
+
         return r
+
+    def find_references(self, text: str) -> list[str]:
+        # remove todo texto até a primeira ocorrência de "references"
+        until_references = re.compile(
+            r'[\s\S]*?(references|bibliography)', re.IGNORECASE | re.MULTILINE)
+
+        isolated = re.sub(until_references, '', text.strip(), count=1)
+
+        # [1]  X ... 1.
+        reference_match = r'\[[0-9]+\] [A-Z].*[\s\S]*?[0-9]\.'
+
+        references = re.findall(reference_match, isolated)
+
+        for ref in references:
+            ref = ref.replace('\n', ' ').strip()
+
+        return references
 
     def match_grammar(self, sentence: str, grammar: list[ChunkRule]) -> bool:
         words = composite(
@@ -75,6 +115,14 @@ class ScyPaper:
                 'proposed',
                 'explores'
             ]
+
+            most_common = nltk.pos_tag(
+                [w for w, _ in self.bag_of_words.most_common(10)])
+
+            # Adiciona os substantivos mais comuns a query
+            for word, pos in most_common:
+                if (pos.startswith('N')):
+                    query.append(word)
 
             points = bm25_no_idf(
                 list_of_sentences, sentence.text, ' '.join(query))
@@ -226,6 +274,32 @@ class ScyPaper:
         return match.replace('\n', ' ').strip()
 
 
+def show_results(file: str, paper: ScyPaper):
+    print("\n=====================================\n")
+    print("Arquivo: ", file + '\n')
+    print("Objetivo => ", paper.objective + '\n')
+    print("Problema => ", paper.problem + '\n')
+    print("Termos mais citados =>")
+
+    for word, count in paper.bag_of_words.most_common(10):
+        print(word, str(count))
+
+    print('\n')
+
+    print("Referências =>")
+    for ref in paper.references:
+        print(ref + '\n')
+
+
+def write_to_file(file: str, paper: ScyPaper):
+    with open(file + '.csv', 'w') as file:
+        writer = csv.DictWriter(
+            file, fieldnames=['name', 'objective', 'problem', 'references'], delimiter=';')
+        writer.writeheader()
+        writer.writerow(
+            {'name': file, 'objective': paper.objective, 'problem': paper.problem, 'references': ' '.join(paper.references)})
+
+
 def main():
     nltk.download('punkt')
     nltk.download('stopwords')
@@ -244,17 +318,8 @@ def main():
 
             paper = ScyPaper(text)
 
-            print("\n=====================================\n")
-            print("Arquivo: ", path + '\n')
-            print("Objetivo => ", paper.objective + '\n')
-            print("Problema => ", paper.problem + '\n')
-
-            with open(path + '.csv', 'w') as file:
-                writer = csv.DictWriter(
-                    file, fieldnames=['name', 'objective', 'problem'])
-                writer.writeheader()
-                writer.writerow(
-                    {'name': path, 'objective': paper.objective, 'problem': paper.problem})
+            show_results(path, paper)
+            write_to_file(path, paper)
 
             return
 
@@ -269,17 +334,8 @@ def main():
 
             paper = ScyPaper(text)
 
-            print("\n=====================================\n")
-            print("Arquivo: ", fullpath + '\n')
-            print("Objetivo => ", paper.objective + '\n')
-            print("Problema => ", paper.problem + '\n')
-
-            with open(fullpath + '.csv', 'w') as file:
-                writer = csv.DictWriter(
-                    file, fieldnames=['name', 'objective', 'problem'], delimiter=';')
-                writer.writeheader()
-                writer.writerow(
-                    {'name': fullpath, 'objective': paper.objective, 'problem': paper.problem})
+            show_results(fullpath, paper)
+            write_to_file(fullpath, paper)
 
 
 if (__name__ == '__main__'):
