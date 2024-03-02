@@ -7,7 +7,7 @@ from text import (composite, remove_punctuation, remove_stop_words,
 #
 #   Implentação da função BM25 sem considerar o IDF
 #
-def bm25_no_idf(corpus: list[str], doc: str, query: str) -> float:
+def bm25_no_idf(corpus: list[str], doc: str, query: str, **kwargs) -> float:
     K = 2.0
     B = 0.75
 
@@ -27,7 +27,8 @@ def bm25_no_idf(corpus: list[str], doc: str, query: str) -> float:
 
     points = 0
 
-    avg_words = np.mean([len(prepare(d)) for d in corpus])
+    avg_words = kwargs.get('avg_words',  np.mean(
+        [len(prepare(d)) for d in corpus]))
 
     for q in query:
         tf = term_freq(words, q)

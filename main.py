@@ -6,6 +6,7 @@ from collections import Counter, namedtuple
 from xml.etree import ElementTree
 
 import nltk
+import numpy as np
 from nltk.chunk import RegexpChunkParser
 from nltk.chunk.regexp import ChunkRule
 
@@ -20,14 +21,17 @@ IndexToSentence = namedtuple('IndexToSentence', ['index', 'text'])
 
 class ScyPaper:
     text: str
+    sentences: list[str]
     bag_of_words: Counter
     objective: str
     problem: str
+    method: str
     references: list[str]
 
     def __init__(self, text: str):
         self.text = self.clear_text(text)
         self.references = self.find_references(text)
+        self.sentences = to_sentences(self.text)
 
     def count_words(self, text: str) -> Counter:
         words = composite(
@@ -65,8 +69,8 @@ class ScyPaper:
 
         isolated = re.sub(until_references, '', text.strip(), count=1)
 
-        # [1]  X ... 1.
-        reference_match = r'\[[0-9]+\] [A-Z].*[\s\S]*?[0-9]\.'
+        # ([1]  X ...) [2]
+        reference_match = r'(\[[0-9]+\].*[\s\S]*?(?=\[[0-9]+\]|$))'
 
         references = re.findall(reference_match, isolated)
 
@@ -104,7 +108,7 @@ class ScyPaper:
         #   que indicam um objetivo
         #
 
-        def ranquear_objetivo(list_of_sentences: list[str], sentence: IndexToSentence) -> float:
+        def ranquear_objetivo(list_of_sentences: list[str], sentence: IndexToSentence, avg_len: int) -> float:
             #
             #   Essa função ranqueia um objetivo baseado na sua posição no texto
             #   e o escore de query BM25
@@ -122,30 +126,20 @@ class ScyPaper:
                 'explores'
             ]
 
-            most_common = nltk.pos_tag(
-                [w for w, _ in self.bag_of_words.most_common(10)])
-
-            # Adiciona os substantivos mais comuns a query
-            for word, pos in most_common:
-                if (pos.startswith('N')):
-                    query.append(word)
-
             points = bm25_no_idf(
-                list_of_sentences, sentence.text, ' '.join(query))
+                list_of_sentences, sentence.text, ' '.join(query), avg_words=avg_len)
 
             locality = (1.0 - (sentence.index /
                         (len(list_of_sentences) + 1)))
 
             return points + locality
 
-        sentences = to_sentences(self.text)
-
         in_paper_re = re.compile(
             r'\b(?:in this paper|we propose|this paper presents?|this paper proposes?|is proposed in this paper)\b', re.IGNORECASE)
 
         maybe_objective = set()
 
-        for (index, sentence) in enumerate(sentences):
+        for (index, sentence) in enumerate(self.sentences):
             # se conter palavras como "in this paper" ou "we propose" é um forte indicativo de objetivo
             if (in_paper_re.match(sentence)):
                 maybe_objective.add(index)
@@ -184,13 +178,15 @@ class ScyPaper:
             if self.match_grammar(sentence, GRAMMAR):
                 maybe_objective.add(index)
 
-        objective_with_index = [IndexToSentence(i, sentences[i])
+        objective_with_index = [IndexToSentence(i, self.sentences[i])
                                 for i in maybe_objective]
 
         objectives = [obj.text for obj in objective_with_index]
 
+        avg_len = np.mean([len(obj) for obj in objectives])
+
         sorted_objetives = sorted(objective_with_index,
-                                  key=lambda x: ranquear_objetivo(objectives, x), reverse=True)
+                                  key=lambda x: ranquear_objetivo(objectives, x, avg_len), reverse=True)
 
         match = sorted_objetives[0][1] if len(
             sorted_objetives) > 0 else 'No objective found'
@@ -206,7 +202,7 @@ class ScyPaper:
         #   baseado em estruturas gramaticais e palavras-chave
         #
 
-        def ranquear_problema(list_of_sentences: list[str], sentence: IndexToSentence) -> float:
+        def ranquear_problema(list_of_sentences: list[str], sentence: IndexToSentence, avg_len: int) -> float:
             #
             #   Essa função ranqueia um problema baseado na sua posição no texto
             #   e o escore de query BM25
@@ -223,18 +219,16 @@ class ScyPaper:
             ]
 
             points = bm25_no_idf(
-                list_of_sentences, sentence.text, ' '.join(query))
+                list_of_sentences, sentence.text, ' '.join(query), avg_words=avg_len)
 
             locality = (1.0 - (sentence.index /
                         (len(list_of_sentences) + 1)))
 
             return points + locality
 
-        sentences = to_sentences(self.text)
-
         maybe_problem = set()
 
-        for (index, sentence) in enumerate(sentences):
+        for (index, sentence) in enumerate(self.sentences):
             if (sentence.strip() == ''):
                 continue
 
@@ -242,39 +236,41 @@ class ScyPaper:
                 # the well-known problem of
                 ChunkRule(
                     '<DT|CD><JJ><NN|NNS><IN>',
-                    'test'),
+                    'Delimitador|Cardinal, Adjetivo, Substantivo, Preposição'),
                 # lacks better security
                 ChunkRule(
                     '<NNS><JJ><N.*>',
-                    'test2'),
+                    'Substantivo plural, Adjetivo, Substantivo/Nome próprio'),
                 # such as
                 ChunkRule(
                     '<JJ><IN>',
-                    'test3'),
+                    'Adjetivo, Preposição'),
                 # security has always been
                 ChunkRule(
                     '<NNS><VBZ><RB>?<VBN>',
-                    'test4'),
+                    'Substantivo plural, verbo-presente, advérbio?, verbo-presente-participio'),
                 # this can prevent
                 ChunkRule(
                     '<DT><MD><VB>',
-                    'test4'),
+                    'Delimitador, verbo-modal, verbo'),
                 # by solving the
                 ChunkRule(
                     '<IN><VBG><DT>',
-                    'test5'),
+                    'Preposição, verbo-gerundio, delimitador'),
 
             ]
             if self.match_grammar(sentence, GRAMMAR):
                 maybe_problem.add(index)
 
-        problems_with_index = [IndexToSentence(i, sentences[i])
+        problems_with_index = [IndexToSentence(i, self.sentences[i])
                                for i in maybe_problem]
 
         problems = [obj.text for obj in problems_with_index]
 
+        avg_len = np.mean([len(obj) for obj in problems])
+
         sorted_problems = sorted(problems_with_index,
-                                 key=lambda x: ranquear_problema(problems, x), reverse=True)
+                                 key=lambda x: ranquear_problema(problems, x, avg_len), reverse=True)
 
         match = sorted_problems[0][1] if len(
             sorted_problems) > 0 else 'No problem found'
@@ -283,12 +279,79 @@ class ScyPaper:
 
         return self.problem
 
+    def search_for_methods(self) -> str:
+
+        #
+        #   Essa função busca pela metodologia no texto
+        #   baseado em estruturas gramaticais e palavras-chave
+        #
+
+        def ranquear_metodos(list_of_sentences: list[str], sentence: IndexToSentence, avg_len: int) -> float:
+            #
+            #   Essa função ranqueia metodologias baseado na sua posição no texto
+            #   e o escore de query BM25
+            #   De forma que metodologias no começo do texto, com palavras da query
+            #   pontuem mais
+            #
+            query = [
+                'analysis',
+                'method',
+                'content',
+                'survey',
+                'review',
+                'state-of-the-art',
+                'comparative'
+            ]
+
+            points = bm25_no_idf(
+                list_of_sentences, sentence.text, ' '.join(query), avg_words=avg_len)
+
+            # the closer to the middle the better
+            locality = 1.0 - \
+                abs((sentence.index / (len(list_of_sentences) + 1)) - 0.5)
+
+            return points + locality
+
+        maybe_method = set()
+
+        for (index, sentence) in enumerate(self.sentences):
+            if (sentence.strip() == ''):
+                continue
+
+            GRAMMAR = [
+                # comparative analysis of
+                ChunkRule(
+                    '<JJ><NN><IN>',
+                    'Adjetivo, Substantivo, Preposição'),
+            ]
+            if self.match_grammar(sentence, GRAMMAR):
+                maybe_method.add(index)
+
+        method_with_index = [IndexToSentence(i, self.sentences[i])
+                             for i in maybe_method]
+
+        methods = [obj.text for obj in method_with_index]
+
+        avg_len = np.mean([len(obj) for obj in methods])
+
+        sorted_methods = sorted(method_with_index,
+                                key=lambda x: ranquear_metodos(methods, x, avg_len), reverse=True)
+
+        match = sorted_methods[0][1] if len(
+            sorted_methods) > 0 else 'No method found'
+
+        self.method = match.replace('\n', ' ').strip()
+
+        return self.method
+
 
 def show_results(file: str, paper: ScyPaper):
     print("\n=====================================\n")
     print("Arquivo: ", file + '\n')
     print("Objetivo => ", paper.objective + '\n')
     print("Problema => ", paper.problem + '\n')
+    print("Metodologia => ", paper.method + '\n')
+
     print("Termos mais citados =>")
 
     for word, count in paper.bag_of_words.most_common(10):
@@ -311,6 +374,9 @@ def write_to_file(file: str, paper: ScyPaper):
 
     problem = ElementTree.SubElement(root, 'problem')
     problem.text = paper.problem
+
+    method = ElementTree.SubElement(root, 'method')
+    method.text = paper.method
 
     most_cited = ElementTree.SubElement(root, 'most_cited')
     for word, count in paper.bag_of_words.most_common(10):
@@ -337,10 +403,10 @@ def write_to_file(file: str, paper: ScyPaper):
 
 
 def main():
-    nltk.download('punkt')
-    nltk.download('stopwords')
-    nltk.download('averaged_perceptron_tagger')
-    nltk.download('wordnet')
+    nltk.download('punkt', quiet=True)
+    nltk.download('stopwords', quiet=True)
+    nltk.download('averaged_perceptron_tagger', quiet=True)
+    nltk.download('wordnet', quiet=True)
 
     parser = argparse.ArgumentParser(
         prog='Paper Analyzer')
@@ -361,6 +427,7 @@ def main():
         paper.count_words(text)
         paper.search_for_objective()
         paper.search_for_problem()
+        paper.search_for_methods()
 
         show_results(path, paper)
         write_to_file(path, paper)
@@ -379,6 +446,7 @@ def main():
                 paper.count_words(text)
                 paper.search_for_objective()
                 paper.search_for_problem()
+                paper.search_for_methods()
 
                 show_results(fullpath, paper)
                 write_to_file(fullpath, paper)
