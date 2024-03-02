@@ -126,6 +126,14 @@ class ScyPaper:
                 'explores'
             ]
 
+            most_common = nltk.pos_tag(
+                [w for w, _ in self.bag_of_words.most_common(5)])
+
+            # Adiciona os substantivos mais comuns a query
+            for word, pos in most_common:
+                if (pos.startswith('N')):
+                    query.append(word)
+
             points = bm25_no_idf(
                 list_of_sentences, sentence.text, ' '.join(query), avg_words=avg_len)
 
@@ -359,9 +367,9 @@ def show_results(file: str, paper: ScyPaper):
 
     print('\n')
 
-    print("Referências =>")
-    for ref in paper.references:
-        print(ref + '\n')
+    # print("Referências =>")
+    # for ref in paper.references:
+    #     print(ref + '\n')
 
 
 def write_to_file(file: str, paper: ScyPaper):
