@@ -27,6 +27,7 @@ class ScyPaper:
     objective: str
     problem: str
     method: str
+    contribuitions: str
     references: list[str]
 
     def __init__(self, text: str):
@@ -397,6 +398,91 @@ class ScyPaper:
 
         return self.method
 
+    def search_for_contribuitions(self) -> str:
+
+        #
+        #   Essa função busca pelas contribuições no texto
+        #   baseado em estruturas gramaticais e palavras-chave
+        #
+
+        def ranquear_contribuicoes(list_of_sentences: list[str], sentence: IndexToSentence, avg_len: int) -> float:
+            #
+            #   Essa função ranqueia contribuições baseado na sua posição no texto
+            #   e o escore de query BM25
+            #   De forma que metodologias no começo do texto, com palavras da query
+            #   pontuem mais
+            #
+            query = [
+                'contribuition',
+                'paper',
+                'summarized',
+                'results',
+                'offers',
+                'highlights',
+            ]
+
+            localidade = (1.0 - (sentence.index /
+                                 (len(list_of_sentences) + 1)))
+
+            points = bm25_no_idf(
+                list_of_sentences, sentence.text, ' '.join(query), avg_words=avg_len)
+
+            return points - localidade
+
+        maybe_contrib = set()
+
+        comparative_re = re.compile(
+            r'contribution|contribute|we proposed|based on the results|demonstrate|similar|in this paper|this paper', re.IGNORECASE)
+
+        negative_re = re.compile(
+            r'section|objective', re.IGNORECASE)
+
+        for (index, sentence) in enumerate(self.sentences):
+            if (comparative_re.search(sentence) and not negative_re.search(sentence)):
+                maybe_contrib.add(index)
+                continue
+
+            if (negative_re.search(sentence)):
+                continue
+
+            if (sentence.strip() == ''):
+                continue
+
+            GRAMMAR = [
+                # the main contribution of this paper
+                ChunkRule(
+                    '<DT><JJ><NN><IN><DT><NN>',
+                    'Delimitador, adjetivo, substantivo, preposição, delimitador, substantivo'),
+                # Based on the results of
+                ChunkRule(
+                    '<VBN><IN><DT><NNS><IN>',
+                    'Verbo-presente-participio, preposição, delimitador, substantivo plural, preposição'),
+                # 'gives similar security with
+                ChunkRule(
+                    '<VBZ><JJ><NN><IN>',
+                    'Verbo-presente, adjetivo, substantivo, preposição'),
+            ]
+
+            if self.match_grammar(sentence, GRAMMAR):
+                maybe_contrib.add(index)
+
+        contrib_with_index = [IndexToSentence(i, self.sentences[i])
+                              for i in maybe_contrib]
+
+        contribs = [obj.text for obj in contrib_with_index]
+
+        avg_len = np.mean([len(obj) for obj in contribs])
+
+        sorted_contribs = sorted(contrib_with_index,
+                                 key=lambda x: ranquear_contribuicoes(contribs, x, avg_len), reverse=True)
+
+        match = sorted_contribs[0][1] if len(
+            sorted_contribs) > 0 else 'No contribution found'
+
+        self.contribuitions = match.replace('\n', ' ').strip()
+
+        return self.contribuitions
+
 
 def show_results(file: str, paper: ScyPaper):
     print("\n=====================================\n")
@@ -404,6 +490,7 @@ def show_results(file: str, paper: ScyPaper):
     print("Objetivo => ", paper.objective + '\n')
     print("Problema => ", paper.problem + '\n')
     print("Metodologia => ", paper.method + '\n')
+    print("Contribuições => ", paper.contribuitions + '\n')
 
     print("Termos mais citados =>")
 
@@ -430,6 +517,9 @@ def write_to_file(file: str, paper: ScyPaper):
 
     method = ElementTree.SubElement(root, 'method')
     method.text = paper.method
+
+    contribuitions = ElementTree.SubElement(root, 'contribuitions')
+    contribuitions.text = paper.contribuitions
 
     most_cited = ElementTree.SubElement(root, 'most_cited')
     for word, count in paper.bag_of_words.most_common(10):
@@ -461,6 +551,7 @@ def process_file(fullpath: str) -> ScyPaper:
     paper = ScyPaper(text)
 
     paper.count_words(text)
+    paper.search_for_contribuitions()
     paper.search_for_objective()
     paper.search_for_problem()
     paper.search_for_methods()
@@ -488,17 +579,9 @@ def main():
     path = args.path
 
     if os.path.isfile(path) and path.endswith('.pdf'):
-        text = extrair_texto(path)
-
-        paper = ScyPaper(text)
-
-        paper.count_words(text)
-        paper.search_for_objective()
-        paper.search_for_problem()
-        paper.search_for_methods()
+        paper = process_file(path)
 
         show_results(path, paper)
-        write_to_file(path, paper)
 
         return
 
