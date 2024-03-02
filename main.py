@@ -3,6 +3,7 @@ import os
 import re
 import sys
 from collections import Counter, namedtuple
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from xml.etree import ElementTree
 
 import nltk
@@ -410,6 +411,21 @@ def write_to_file(file: str, paper: ScyPaper):
         f.write(content.encode('utf-8'))
 
 
+def process_file(fullpath: str) -> ScyPaper:
+    text = extrair_texto(fullpath)
+
+    paper = ScyPaper(text)
+
+    paper.count_words(text)
+    paper.search_for_objective()
+    paper.search_for_problem()
+    paper.search_for_methods()
+
+    write_to_file(fullpath, paper)
+
+    return paper
+
+
 def main():
     nltk.download('punkt', quiet=True)
     nltk.download('stopwords', quiet=True)
@@ -443,21 +459,21 @@ def main():
         return
 
     if os.path.isdir(path):
-        for filename in os.listdir(path):
-            if filename.endswith('.pdf'):
-                fullpath = os.path.join(path, filename)
+        with ProcessPoolExecutor() as executor:
+            futures = dict()
 
-                text = extrair_texto(fullpath)
+            for filename in os.listdir(path):
+                if filename.endswith('.pdf'):
+                    fullpath = os.path.join(path, filename)
 
-                paper = ScyPaper(text)
+                    futures[executor.submit(process_file, fullpath)] = fullpath
 
-                paper.count_words(text)
-                paper.search_for_objective()
-                paper.search_for_problem()
-                paper.search_for_methods()
+            for future in as_completed(futures):
+                fullpath = futures[future]
+
+                paper = future.result()
 
                 show_results(fullpath, paper)
-                write_to_file(fullpath, paper)
 
 
 if (__name__ == '__main__'):
