@@ -150,7 +150,7 @@ class ScyPaper:
 
         for (index, sentence) in enumerate(self.sentences):
             # se conter palavras como "in this paper" ou "we propose" é um forte indicativo de objetivo
-            if (in_paper_re.match(sentence)):
+            if (in_paper_re.findall(sentence)):
                 maybe_objective.add(index)
                 continue
 
@@ -304,35 +304,79 @@ class ScyPaper:
             #
             query = [
                 'analysis',
-                'method',
+                'methodology',
                 'content',
                 'survey',
                 'review',
-                'state-of-the-art',
-                'comparative'
+                'evaluation',
+                'comparative',
+                'extended',
+                'overview',
+                'state-of-the-art'
+                'discussed',
+                'evaluated',
+                'compared',
+                'paper',
+                'simulation',
+                'utilizing',
+                'investigate',
+                'experiment',
+                'relies'
+
             ]
 
             points = bm25_no_idf(
                 list_of_sentences, sentence.text, ' '.join(query), avg_words=avg_len)
 
-            # the closer to the middle the better
-            locality = 1.0 - \
-                abs((sentence.index / (len(list_of_sentences) + 1)) - 0.5)
-
-            return points + locality
+            return points
 
         maybe_method = set()
 
+        comparative_re = re.compile(
+            r'\b(?:comparative analysis?|by utilizing|this paper|evaluation of|analysis of?|is? extended|relies on|experimentation)\b', re.IGNORECASE)
+
+        negative_re = re.compile(
+            r'contribution|section|the associate editor|discussion', re.IGNORECASE)
+
         for (index, sentence) in enumerate(self.sentences):
+            if (comparative_re.search(sentence) and not negative_re.search(sentence)):
+                maybe_method.add(index)
+                continue
+
+            if (negative_re.search(sentence)):
+                continue
+
             if (sentence.strip() == ''):
                 continue
 
             GRAMMAR = [
-                # comparative analysis of
+                # problem is extended to the
                 ChunkRule(
-                    '<JJ><NN><IN>',
-                    'Adjetivo, Substantivo, Preposição'),
+                    '<NN><VBZ><VBN><TO><DT>',
+                    'Substantivo, verbo-presente, verbo-presente-participio, preposição, delimitador'),
+                # comparative analysis of several ALP
+                ChunkRule(
+                    '<JJ><NN><IN><JJ><NN|NNP|NNS>',
+                    'Adjetivo, substantivo, preposição, adjetivo, substantivo'),
+                # using the measurement methodology
+                ChunkRule(
+                    '<VBG><DT><NN>',
+                    'Verbo-gerundio, delimitador, substantivo'),
+                # we investigate the performance
+                ChunkRule(
+                    '<PRP><VBP><DT><JJ>',
+                    'Pronome, verbo-presente, delimitador, adjetivo'),
+                # evaluated and compared to
+                ChunkRule(
+                    '<VBN><CC><VBN><TO>',
+                    'Verbo-presente-participio, conjunção-coordenativa, verbo-presente-participio, preposição'),
+                # experiments are conducted in this paper
+                ChunkRule(
+                    '<NNS><VBP><VBN><IN><DT><NN>',
+                    'Substantivo plural, verbo-presente, verbo-presente-participio'),
+
             ]
+
             if self.match_grammar(sentence, GRAMMAR):
                 maybe_method.add(index)
 
