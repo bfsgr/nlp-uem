@@ -562,14 +562,13 @@ def process_file(fullpath: str) -> ScyPaper:
 
 
 def main(overrided_path: str | None = None):
-    parser = argparse.ArgumentParser(
-        prog='Paper Analyzer')
+    args_path = sys.argv[1] if len(sys.argv) > 1 else ''
 
-    parser.add_argument('path', help='Path to a file or directory', type=str)
+    path = overrided_path if overrided_path else args_path
 
-    args = parser.parse_args()
-
-    path = overrided_path if overrided_path else args.path
+    if not os.path.exists(path) or path == None:
+        print('Path not found')
+        sys.exit(1)
 
     if os.path.isfile(path) and path.endswith('.pdf'):
         paper = process_file(path)
