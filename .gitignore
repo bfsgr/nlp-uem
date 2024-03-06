@@ -3,3 +3,4 @@ __pycache__
 !requirements.txt
 .DS_Store
 *.xml
+*.cache
