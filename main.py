@@ -550,7 +550,7 @@ def process_file(fullpath: str) -> ScyPaper:
 
     paper = ScyPaper(text)
 
-    paper.count_words(text)
+    paper.count_words(paper.text)
     paper.search_for_contribuitions()
     paper.search_for_objective()
     paper.search_for_problem()
@@ -561,17 +561,15 @@ def process_file(fullpath: str) -> ScyPaper:
     return paper
 
 
-def main():
+def main(overrided_path: str | None = None):
     parser = argparse.ArgumentParser(
         prog='Paper Analyzer')
 
     parser.add_argument('path', help='Path to a file or directory', type=str)
-    parser.add_argument(
-        '-s', '--search', help='Search for a term in a file', type=str)
 
     args = parser.parse_args()
 
-    path = args.path
+    path = overrided_path if overrided_path else args.path
 
     if os.path.isfile(path) and path.endswith('.pdf'):
         paper = process_file(path)
